@@ -1,6 +1,6 @@
 import h5py
 import numpy as np
-import matplotlib.pyplot as plt
+import cv2
 import os
 
 
@@ -27,18 +27,13 @@ def get_data(filename, dataset_ID):
             im = series[frame_num]
             im = 255 * ((im - np.min(im)) / np.ptp(im))
             im = np.rot90(im, 1)
-            plt.imshow(im)
-            plt.axis("off")
-            plt.set_cmap("gray")
-            plt.savefig(
+            cv2.imwrite(
                 data_path_train
                 + str(series_num).zfill(4)
                 + "-"
                 + str(frame_num).zfill(4)
                 + ".jpg",
-                bbox_inches="tight",
-                pad_inches=0,
-                dpi=200,
+                im
             )
 
     # TEST SPLIT
@@ -48,18 +43,13 @@ def get_data(filename, dataset_ID):
             im = series[frame_num]
             im = 255 * ((im - np.min(im)) / np.ptp(im))
             im = np.rot90(im, 1)
-            plt.imshow(im)
-            plt.axis("off")
-            plt.set_cmap("gray")
-            plt.savefig(
+            cv2.imwrite(
                 data_path_test
                 + str(series_num).zfill(4)
                 + "-"
                 + str(frame_num).zfill(4)
                 + ".jpg",
-                bbox_inches="tight",
-                pad_inches=0,
-                dpi=200,
+                im
             )
 
 get_data("../mrus/us_images_resampled800.h5", "A")
