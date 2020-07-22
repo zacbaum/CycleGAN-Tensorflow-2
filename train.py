@@ -22,6 +22,7 @@ py.arg("--output_dir", default="horse2zebra")
 py.arg("--datasets_dir", default="datasets")
 py.arg("--load_size", type=int, default=286)  # load image to this size
 py.arg("--crop_size", type=int, default=256)  # then crop to this size
+py.arg("--channels", type=int, default=3)  # 3 for RGB, 1 for grayscale
 py.arg("--batch_size", type=int, default=1)
 py.arg("--epochs", type=int, default=200)
 py.arg("--epoch_decay", type=int, default=100)  # epoch to start decaying learning rate
@@ -60,6 +61,7 @@ A_B_dataset, len_dataset = data.make_zip_dataset(
     args.batch_size,
     args.load_size,
     args.crop_size,
+    args.channels,
     training=True,
     repeat=False,
 )
@@ -75,6 +77,7 @@ A_B_dataset_test, _ = data.make_zip_dataset(
     args.batch_size,
     args.load_size,
     args.crop_size,
+    args.channels,
     training=False,
     repeat=True,
 )
@@ -85,14 +88,14 @@ A_B_dataset_test, _ = data.make_zip_dataset(
 # ==============================================================================
 
 G_A2B = module.ResnetGenerator(
-    input_shape=(args.crop_size, args.crop_size, 3), n_blocks=args.resnet_blocks
+    input_shape=(args.crop_size, args.crop_size, args.channels), output_channels=args.channels, n_blocks=args.resnet_blocks
 )
 G_B2A = module.ResnetGenerator(
-    input_shape=(args.crop_size, args.crop_size, 3), n_blocks=args.resnet_blocks
+    input_shape=(args.crop_size, args.crop_size, args.channels), output_channels=args.channels, n_blocks=args.resnet_blocks
 )
 
-D_A = module.ConvDiscriminator(input_shape=(args.crop_size, args.crop_size, 3))
-D_B = module.ConvDiscriminator(input_shape=(args.crop_size, args.crop_size, 3))
+D_A = module.ConvDiscriminator(input_shape=(args.crop_size, args.crop_size, args.channels))
+D_B = module.ConvDiscriminator(input_shape=(args.crop_size, args.crop_size, args.channels))
 
 d_loss_fn, g_loss_fn = gan.get_adversarial_losses_fn(args.adversarial_loss_mode)
 cycle_loss_fn = tf.losses.MeanAbsoluteError()

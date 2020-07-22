@@ -79,6 +79,7 @@ def memory_data_batch_dataset(memory_data,
 
 
 def disk_image_batch_dataset(img_paths,
+                             channels,
                              batch_size,
                              labels=None,
                              drop_remainder=True,
@@ -105,7 +106,10 @@ def disk_image_batch_dataset(img_paths,
 
     def parse_fn(path, *label):
         img = tf.io.read_file(path)
-        img = tf.image.decode_png(img, 3)  # fix channels to 3
+        img = tf.image.decode_png(img, channels) # Still works with JPGs or GIF images. 
+                                                 # Don't use tf.image.decode_image as 
+                                                 # it returns tensors of the wrong size,
+                                                 # and breaks this parsing functionality.
         return (img,) + label
 
     if map_fn:  # fuse `map_fn` and `parse_fn`
