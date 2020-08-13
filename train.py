@@ -38,6 +38,7 @@ py.arg("--gradient_penalty_weight", type=float, default=10.0)
 py.arg("--cycle_loss_weight", type=float, default=10.0)
 py.arg("--identity_loss_weight", type=float, default=0.0)
 py.arg("--resnet_blocks", type=int, default=9)
+py.arg("--gauss_noise", type=float, default=0.0)
 py.arg("--pool_size", type=int, default=50)  # pool size to store fake samples
 args = py.args()
 
@@ -271,6 +272,10 @@ with train_summary_writer.as_default():
 
         # train for an epoch
         for A, B in tqdm.tqdm(A_B_dataset, desc="Inner Epoch Loop", total=len_dataset):
+            if args.gauss_noise:
+                A = np.clip(A + np.random.normal(scale=args.gauss_noise, size=A.shape), -1, 1)
+                B = np.clip(B + np.random.normal(scale=args.gauss_noise, size=B.shape), -1, 1)
+
             G_loss_dict, D_loss_dict = train_step(A, B)
 
             # # summary
