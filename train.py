@@ -22,7 +22,7 @@ py.arg("--output_dir", default="horse2zebra")
 py.arg("--datasets_dir", default="datasets")
 py.arg("--load_size", type=int, default=286)  # load image to this size
 py.arg("--crop_size", type=int, default=256)  # then crop to this size
-py.arg("--channels", type=int, default=3)  # 3 for RGB, 1 for grayscale
+py.arg("--channels", type=int, default=1)  # 3 for RGB, 1 for grayscale
 py.arg("--batch_size", type=int, default=1)
 py.arg("--epochs", type=int, default=200)
 py.arg("--epoch_decay", type=int, default=100)  # epoch to start decaying learning rate
@@ -39,6 +39,7 @@ py.arg("--cycle_loss_weight", type=float, default=10.0)
 py.arg("--identity_loss_weight", type=float, default=0.0)
 py.arg("--resnet_blocks", type=int, default=9)
 py.arg("--gauss_noise", type=float, default=0.0)
+py.arg("--DnCNN", type=str, default=None)
 py.arg("--pool_size", type=int, default=50)  # pool size to store fake samples
 args = py.args()
 
@@ -98,6 +99,9 @@ G_B2A = module.ResnetGenerator(
 D_A = module.ConvDiscriminator(input_shape=(args.crop_size, args.crop_size, args.channels))
 D_B = module.ConvDiscriminator(input_shape=(args.crop_size, args.crop_size, args.channels))
 
+if args.DnCNN is not None:
+    DnCNN = keras.models.load_model(args.DnCNN, compile=False)
+
 d_loss_fn, g_loss_fn = gan.get_adversarial_losses_fn(args.adversarial_loss_mode)
 cycle_loss_fn = tf.losses.MeanAbsoluteError()
 identity_loss_fn = tf.losses.MeanAbsoluteError()
@@ -122,8 +126,14 @@ def train_G(A, B):
     with tf.GradientTape() as t:
         A2B = G_A2B(A, training=True)
         B2A = G_B2A(B, training=True)
-        A2B2A = G_B2A(A2B, training=True)
-        B2A2B = G_A2B(B2A, training=True)
+        if args.DnCNN is not None:
+            A2B_dn = DnCNN(A2B, training=False)
+            B2A_dn = DnCNN(B2A, training=False)
+            A2B2A = G_B2A(A2B_dn, training=True)
+            B2A2B = G_A2B(B2A_dn, training=True)
+        else:
+            A2B2A = G_B2A(A2B, training=True)
+            B2A2B = G_A2B(B2A, training=True)
         A2A = G_B2A(A, training=True)
         B2B = G_A2B(B, training=True)
 
