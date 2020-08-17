@@ -127,8 +127,8 @@ def train_G(A, B):
         A2B = G_A2B(A, training=True)
         B2A = G_B2A(B, training=True)
         if args.DnCNN is not None:
-            A2B_dn = DnCNN(A2B, training=False)
-            B2A_dn = DnCNN(B2A, training=False)
+            A2B_dn = tf.clip_by_value(DnCNN(A2B, training=False), -1, 1)
+            B2A_dn = tf.clip_by_value(DnCNN(B2A, training=False), -1, 1)
             A2B2A = G_B2A(A2B_dn, training=True)
             B2A2B = G_A2B(B2A_dn, training=True)
         else:
@@ -232,6 +232,15 @@ def sample(A, B):
     B2A = G_B2A(B, training=False)
     A2B2A = G_B2A(A2B, training=False)
     B2A2B = G_A2B(B2A, training=False)
+
+    if args.DnCNN is not None:
+        A2B_dn = tf.clip_by_value(DnCNN(A2B, training=False), -1, 1)
+        B2A_dn = tf.clip_by_value(DnCNN(B2A, training=False), -1, 1)
+        A2B2A = G_B2A(A2B_dn, training=False)
+        B2A2B = G_A2B(B2A_dn, training=False)
+
+        return A2B, B2A, A2B_dn, B2A_dn, A2B2A, B2A2B
+
     return A2B, B2A, A2B2A, B2A2B
 
 
@@ -300,10 +309,23 @@ with train_summary_writer.as_default():
             # sample
             if G_optimizer.iterations.numpy() % 100 == 0:
                 A, B = next(test_iter)
-                A2B, B2A, A2B2A, B2A2B = sample(A, B)
-                img = im.immerge(
-                    np.concatenate([A, A2B, A2B2A, B, B2A, B2A2B], axis=0), n_rows=2
-                )
+                if args.DnCNN is not None:
+                    A2B, B2A, A2B_dn, B2A_dn, A2B2A, B2A2B = sample(A, B)
+                    
+                    A2B_diff = A2B - A2B_dn
+                    A2B_diff = 2.*(A2B_diff - np.min(A2B_diff)) / np.ptp(A2B_diff) - 1
+                    B2A_diff = B2A - B2A_dn
+                    B2A_diff = 2.*(B2A_diff - np.min(B2A_diff)) / np.ptp(B2A_diff) - 1
+
+                    img = im.immerge(
+                        np.concatenate([A, A2B, A2B_diff, A2B_dn, A2B2A, B, B2A, B2A_diff, B2A_dn, B2A2B], axis=0), n_rows=2
+                    )
+                else:
+                    A2B, B2A, A2B2A, B2A2B = sample(A, B)
+                    img = im.immerge(
+                        np.concatenate([A, A2B, A2B2A, B, B2A, B2A2B], axis=0), n_rows=2
+                    )
+
                 im.imwrite(
                     img,
                     py.join(
