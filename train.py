@@ -162,10 +162,7 @@ def train_G(A, B):
 
         # Cycle translation losses
         A2B2A_cycle_loss = cycle_loss_fn(A, A2B2A)
-        if args.bidirectional:
-            B2A2B_cycle_loss = cycle_loss_fn(B, B2A2B)
-        else:
-            B2A2B_cycle_loss = cycle_loss_fn(B, A2B)
+        B2A2B_cycle_loss = cycle_loss_fn(B, B2A2B) if args.bidirectional else cycle_loss_fn(B, A2B)
 
         # Identity losses
         A2A_id_loss = identity_loss_fn(A, A2A) if args.identity_loss_weight else 0
@@ -174,8 +171,7 @@ def train_G(A, B):
         # Total loss
         G_loss = A2B_g_loss + B2A_g_loss
         G_loss += (A2B2A_cycle_loss + B2A2B_cycle_loss) * args.cycle_loss_weight
-        if args.identity_loss_weight:
-            G_loss += (A2A_id_loss + B2B_id_loss) * args.identity_loss_weight
+        G_loss += (A2A_id_loss + B2B_id_loss) * args.identity_loss_weight
 
     G_grad = t.gradient(G_loss, G_A2B.trainable_variables + G_B2A.trainable_variables)
     G_optimizer.apply_gradients(
@@ -245,14 +241,12 @@ def sample(A, B):
         if args.bidirectional:
             B2A_dn = tf.clip_by_value(DnCNN(B2A, training=False), -1, 1)
             B2A2B = G_A2B(B2A_dn, training=False)
-
             return A2B, B2A, A2B_dn, B2A_dn, A2B2A, B2A2B
         return A2B, A2B_dn, A2B2A
 
     A2B2A = G_B2A(A2B, training=False)
     if args.bidirectional:
         B2A2B = G_A2B(B2A, training=False)
-
         return A2B, B2A, A2B2A, B2A2B
     return A2B, A2B2A
 
