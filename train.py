@@ -24,8 +24,8 @@ py.arg("--load_size", type=int, default=286)  # load image to this size
 py.arg("--crop_size", type=int, default=256)  # then crop to this size
 py.arg("--channels", type=int, default=1)  # 3 for RGB, 1 for grayscale
 py.arg("--batch_size", type=int, default=1)
-py.arg("--epochs", type=int, default=200)
-py.arg("--epoch_decay", type=int, default=100)  # epoch to start decaying learning rate
+py.arg("--epochs", type=int, default=100)
+py.arg("--epoch_decay", type=int, default=50)  # epoch to start decaying learning rate
 py.arg("--lr", type=float, default=0.0002)
 py.arg("--beta_1", type=float, default=0.5)
 py.arg(
@@ -33,13 +33,11 @@ py.arg(
     default="lsgan",
     choices=["gan", "hinge_v1", "hinge_v2", "lsgan", "wgan"],
 )
-py.arg("--gradient_penalty_mode", default="none", choices=["none", "dragan", "wgan-gp"])
-py.arg("--gradient_penalty_weight", type=float, default=10.0)
 py.arg("--cycle_loss_weight", type=float, default=10.0)
 py.arg("--identity_loss_weight", type=float, default=0.0)
 py.arg("--resnet_blocks", type=int, default=9)
-py.arg("--gauss_noise", type=float, default=0.0)
 py.arg("--DnCNN", type=str, default=None)
+py.arg("--bidirectional", type=bool, default=True)
 py.arg("--pool_size", type=int, default=50)  # pool size to store fake samples
 args = py.args()
 
@@ -90,14 +88,22 @@ A_B_dataset_test, _ = data.make_zip_dataset(
 # ==============================================================================
 
 G_A2B = module.ResnetGenerator(
-    input_shape=(args.crop_size, args.crop_size, args.channels), output_channels=args.channels, n_blocks=args.resnet_blocks
+    input_shape=(args.crop_size, args.crop_size, args.channels),
+    output_channels=args.channels,
+    n_blocks=args.resnet_blocks,
 )
 G_B2A = module.ResnetGenerator(
-    input_shape=(args.crop_size, args.crop_size, args.channels), output_channels=args.channels, n_blocks=args.resnet_blocks
+    input_shape=(args.crop_size, args.crop_size, args.channels),
+    output_channels=args.channels,
+    n_blocks=args.resnet_blocks,
 )
 
-D_A = module.ConvDiscriminator(input_shape=(args.crop_size, args.crop_size, args.channels))
-D_B = module.ConvDiscriminator(input_shape=(args.crop_size, args.crop_size, args.channels))
+D_A = module.ConvDiscriminator(
+    input_shape=(args.crop_size, args.crop_size, args.channels)
+)
+D_B = module.ConvDiscriminator(
+    input_shape=(args.crop_size, args.crop_size, args.channels)
+)
 
 if args.DnCNN is not None:
     DnCNN = keras.models.load_model(args.DnCNN, compile=False)
@@ -124,34 +130,52 @@ D_optimizer = keras.optimizers.Adam(learning_rate=D_lr_scheduler, beta_1=args.be
 @tf.function
 def train_G(A, B):
     with tf.GradientTape() as t:
+        # Initial translations
         A2B = G_A2B(A, training=True)
-        B2A = G_B2A(B, training=True)
+        if args.bidirectional:
+            B2A = G_B2A(B, training=True)
+
+        # Cycle translations
         if args.DnCNN is not None:
             A2B_dn = tf.clip_by_value(DnCNN(A2B, training=False), -1, 1)
-            B2A_dn = tf.clip_by_value(DnCNN(B2A, training=False), -1, 1)
             A2B2A = G_B2A(A2B_dn, training=True)
-            B2A2B = G_A2B(B2A_dn, training=True)
+            if args.bidirectional:
+                B2A_dn = tf.clip_by_value(DnCNN(B2A, training=False), -1, 1)
+                B2A2B = G_A2B(B2A_dn, training=True)
         else:
             A2B2A = G_B2A(A2B, training=True)
-            B2A2B = G_A2B(B2A, training=True)
-        A2A = G_B2A(A, training=True)
-        B2B = G_A2B(B, training=True)
+            if args.bidirectional:
+                B2A2B = G_A2B(B2A, training=True)
 
+        # Identity
+        if args.identity_loss_weight:
+            A2A = G_B2A(A, training=True)
+            B2B = G_A2B(B, training=True)
+
+        # Initial translation logits
         A2B_d_logits = D_B(A2B, training=True)
-        B2A_d_logits = D_A(B2A, training=True)
+        B2A_d_logits = D_A(B2A, training=True) if args.bidirectional else 0
 
+        # Initial translation losses
         A2B_g_loss = g_loss_fn(A2B_d_logits)
-        B2A_g_loss = g_loss_fn(B2A_d_logits)
-        A2B2A_cycle_loss = cycle_loss_fn(A, A2B2A)
-        B2A2B_cycle_loss = cycle_loss_fn(B, B2A2B)
-        A2A_id_loss = identity_loss_fn(A, A2A)
-        B2B_id_loss = identity_loss_fn(B, B2B)
+        B2A_g_loss = g_loss_fn(B2A_d_logits) if args.bidirectional else 0
 
-        G_loss = (
-            (A2B_g_loss + B2A_g_loss)
-            + (A2B2A_cycle_loss + B2A2B_cycle_loss) * args.cycle_loss_weight
-            + (A2A_id_loss + B2B_id_loss) * args.identity_loss_weight
-        )
+        # Cycle translation losses
+        A2B2A_cycle_loss = cycle_loss_fn(A, A2B2A)
+        if args.bidirectional:
+            B2A2B_cycle_loss = cycle_loss_fn(B, B2A2B)
+        else:
+            B2A2B_cycle_loss = cycle_loss_fn(B, A2B)
+
+        # Identity losses
+        A2A_id_loss = identity_loss_fn(A, A2A) if args.identity_loss_weight else 0
+        B2B_id_loss = identity_loss_fn(B, B2B) if args.identity_loss_weight else 0
+
+        # Total loss
+        G_loss = A2B_g_loss + B2A_g_loss
+        G_loss += (A2B2A_cycle_loss + B2A2B_cycle_loss) * args.cycle_loss_weight
+        if args.identity_loss_weight:
+            G_loss += (A2A_id_loss + B2B_id_loss) * args.identity_loss_weight
 
     G_grad = t.gradient(G_loss, G_A2B.trainable_variables + G_B2A.trainable_variables)
     G_optimizer.apply_gradients(
@@ -160,7 +184,7 @@ def train_G(A, B):
 
     return (
         A2B,
-        B2A,
+        (B2A if args.bidirectional else A2B2A),
         {
             "A2B_g_loss": A2B_g_loss,
             "B2A_g_loss": B2A_g_loss,
@@ -182,24 +206,9 @@ def train_D(A, B, A2B, B2A):
 
         A_d_loss, B2A_d_loss = d_loss_fn(A_d_logits, B2A_d_logits)
         B_d_loss, A2B_d_loss = d_loss_fn(B_d_logits, A2B_d_logits)
-        D_A_gp = gan.gradient_penalty(
-            functools.partial(D_A, training=True),
-            A,
-            B2A,
-            mode=args.gradient_penalty_mode,
-        )
-        D_B_gp = gan.gradient_penalty(
-            functools.partial(D_B, training=True),
-            B,
-            A2B,
-            mode=args.gradient_penalty_mode,
-        )
 
-        D_loss = (
-            (A_d_loss + B2A_d_loss)
-            + (B_d_loss + A2B_d_loss)
-            + (D_A_gp + D_B_gp) * args.gradient_penalty_weight
-        )
+        D_loss = A_d_loss + B2A_d_loss
+        D_loss += B_d_loss + A2B_d_loss
 
     D_grad = t.gradient(D_loss, D_A.trainable_variables + D_B.trainable_variables)
     D_optimizer.apply_gradients(
@@ -209,8 +218,6 @@ def train_D(A, B, A2B, B2A):
     return {
         "A_d_loss": A_d_loss + B2A_d_loss,
         "B_d_loss": B_d_loss + A2B_d_loss,
-        "D_A_gp": D_A_gp,
-        "D_B_gp": D_B_gp,
     }
 
 
@@ -229,19 +236,25 @@ def train_step(A, B):
 @tf.function
 def sample(A, B):
     A2B = G_A2B(A, training=False)
-    B2A = G_B2A(B, training=False)
-    A2B2A = G_B2A(A2B, training=False)
-    B2A2B = G_A2B(B2A, training=False)
+    if args.bidirectional:
+        B2A = G_B2A(B, training=False)
 
     if args.DnCNN is not None:
         A2B_dn = tf.clip_by_value(DnCNN(A2B, training=False), -1, 1)
-        B2A_dn = tf.clip_by_value(DnCNN(B2A, training=False), -1, 1)
         A2B2A = G_B2A(A2B_dn, training=False)
-        B2A2B = G_A2B(B2A_dn, training=False)
+        if args.bidirectional:
+            B2A_dn = tf.clip_by_value(DnCNN(B2A, training=False), -1, 1)
+            B2A2B = G_A2B(B2A_dn, training=False)
 
-        return A2B, B2A, A2B_dn, B2A_dn, A2B2A, B2A2B
+            return A2B, B2A, A2B_dn, B2A_dn, A2B2A, B2A2B
+        return A2B, A2B_dn, A2B2A
 
-    return A2B, B2A, A2B2A, B2A2B
+    A2B2A = G_B2A(A2B, training=False)
+    if args.bidirectional:
+        B2A2B = G_A2B(B2A, training=False)
+
+        return A2B, B2A, A2B2A, B2A2B
+    return A2B, A2B2A
 
 
 # ==============================================================================
@@ -291,9 +304,6 @@ with train_summary_writer.as_default():
 
         # train for an epoch
         for A, B in tqdm.tqdm(A_B_dataset, desc="Inner Epoch Loop", total=len_dataset):
-            if args.gauss_noise:
-                A = np.clip(A + np.random.normal(scale=args.gauss_noise, size=A.shape), -1, 1)
-                B = np.clip(B + np.random.normal(scale=args.gauss_noise, size=B.shape), -1, 1)
 
             G_loss_dict, D_loss_dict = train_step(A, B)
 
@@ -309,22 +319,61 @@ with train_summary_writer.as_default():
             # sample
             if G_optimizer.iterations.numpy() % 100 == 0:
                 A, B = next(test_iter)
-                if args.DnCNN is not None:
-                    A2B, B2A, A2B_dn, B2A_dn, A2B2A, B2A2B = sample(A, B)
-                    
-                    A2B_diff = A2B - A2B_dn
-                    A2B_diff = 2.*(A2B_diff - np.min(A2B_diff)) / np.ptp(A2B_diff) - 1
-                    B2A_diff = B2A - B2A_dn
-                    B2A_diff = 2.*(B2A_diff - np.min(B2A_diff)) / np.ptp(B2A_diff) - 1
+                if args.bidirectional:
+                    if args.DnCNN is not None:
+                        A2B, B2A, A2B_dn, B2A_dn, A2B2A, B2A2B = sample(A, B)
 
-                    img = im.immerge(
-                        np.concatenate([A, A2B, A2B_diff, A2B_dn, A2B2A, B, B2A, B2A_diff, B2A_dn, B2A2B], axis=0), n_rows=2
-                    )
+                        A2B_diff = A2B - A2B_dn
+                        A2B_diff = (
+                            2.0 * (A2B_diff - np.min(A2B_diff)) / np.ptp(A2B_diff) - 1
+                        )
+                        B2A_diff = B2A - B2A_dn
+                        B2A_diff = (
+                            2.0 * (B2A_diff - np.min(B2A_diff)) / np.ptp(B2A_diff) - 1
+                        )
+
+                        img = im.immerge(
+                            np.concatenate(
+                                [
+                                    A,
+                                    A2B,
+                                    A2B_diff,
+                                    A2B_dn,
+                                    A2B2A,
+                                    B,
+                                    B2A,
+                                    B2A_diff,
+                                    B2A_dn,
+                                    B2A2B,
+                                ],
+                                axis=0,
+                            ),
+                            n_rows=2,
+                        )
+                    else:
+                        A2B, B2A, A2B2A, B2A2B = sample(A, B)
+                        img = im.immerge(
+                            np.concatenate([A, A2B, A2B2A, B, B2A, B2A2B], axis=0),
+                            n_rows=2,
+                        )
                 else:
-                    A2B, B2A, A2B2A, B2A2B = sample(A, B)
-                    img = im.immerge(
-                        np.concatenate([A, A2B, A2B2A, B, B2A, B2A2B], axis=0), n_rows=2
-                    )
+                    if args.DnCNN is not None:
+                        A2B, A2B_dn, A2B2A = sample(A, B)
+
+                        A2B_diff = A2B - A2B_dn
+                        A2B_diff = (
+                            2.0 * (A2B_diff - np.min(A2B_diff)) / np.ptp(A2B_diff) - 1
+                        )
+
+                        img = im.immerge(
+                            np.concatenate([A, A2B, A2B_diff, A2B_dn, A2B2A], axis=0),
+                            n_rows=1,
+                        )
+                    else:
+                        A2B, A2B2A = sample(A, B)
+                        img = im.immerge(
+                            np.concatenate([A, A2B, A2B2A], axis=0), n_rows=1
+                        )
 
                 im.imwrite(
                     img,
