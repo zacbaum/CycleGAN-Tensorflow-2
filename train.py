@@ -162,7 +162,7 @@ def train_G(A, B):
 
         # Cycle translation losses
         A2B2A_cycle_loss = cycle_loss_fn(A, A2B2A)
-        B2A2B_cycle_loss = cycle_loss_fn(B, B2A2B) if args.bidirectional else cycle_loss_fn(B, A2B)
+        B2A2B_cycle_loss = cycle_loss_fn(B, B2A2B) if args.bidirectional else 0
 
         # Identity losses
         A2A_id_loss = identity_loss_fn(A, A2A) if args.identity_loss_weight else 0
